@@ -7,12 +7,13 @@ from PySide6.QtCore import Qt
 
 from .._paths import user_dir
 
-# 动作→Qt Key 名，去 Key_ 前缀；grab/throw 预留
+# 动作→Qt Key 名，去 Key_ 前缀
 DEFAULT_KEYBINDS = {
     "left": "A", "right": "D", "up": "W", "down": "S",
     "jump": "Space", "grab": "K", "throw": "J",
 }
 ACTIONS = tuple(DEFAULT_KEYBINDS)
+MOVEMENT_ACTIONS = ("left", "right", "up", "down", "jump", "grab", "throw")
 
 
 def _default_path() -> Path:
@@ -25,26 +26,60 @@ def _to_qt_key(name: str) -> int | None:
     return None if key is None else int(key)
 
 
+def _valid_key_name(value) -> bool:
+    return isinstance(value, str) and _to_qt_key(value) is not None
+
+
+def _clean_key_names(names: dict | None) -> dict[str, str]:
+    """Merge a partial key-name mapping with defaults, discarding invalid keys."""
+    clean = dict(DEFAULT_KEYBINDS)
+    if not isinstance(names, dict):
+        return clean
+    for action in ACTIONS:
+        value = names.get(action)
+        if _valid_key_name(value):
+            clean[action] = value
+    return clean
+
+
+def key_name_from_qt(key: int) -> str | None:
+    """Qt Key 整数值 → 键名（去 Key_ 前缀）。"""
+    try:
+        name = Qt.Key(int(key)).name
+    except ValueError:
+        return None
+    if not name.startswith("Key_"):
+        return None
+    return name[4:]
+
+
 def load_key_names(path=None) -> dict[str, str]:
     """动作→键名表，缺文件/坏 JSON 回落默认。"""
     p = Path(path) if path is not None else _default_path()
-    names = dict(DEFAULT_KEYBINDS)
     if not p.exists():
         try:
+            p.parent.mkdir(parents=True, exist_ok=True)
             p.write_text(json.dumps(DEFAULT_KEYBINDS, indent=2), encoding="utf-8")
         except Exception:
             pass
-        return names
+        return dict(DEFAULT_KEYBINDS)
     try:
         loaded = json.loads(p.read_text(encoding="utf-8"))
     except Exception:
-        return names
-    if isinstance(loaded, dict):
-        for action in ACTIONS:
-            v = loaded.get(action)
-            if isinstance(v, str) and _to_qt_key(v) is not None:
-                names[action] = v
-    return names
+        return dict(DEFAULT_KEYBINDS)
+    return _clean_key_names(loaded)
+
+
+def save_key_names(names: dict[str, str], path=None) -> dict[str, str]:
+    """保存有效键名；未知/缺失动作回落默认。"""
+    p = Path(path) if path is not None else _default_path()
+    clean = _clean_key_names(names)
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps(clean, indent=2), encoding="utf-8")
+    except Exception:
+        pass
+    return clean
 
 
 def load_keymap(path=None) -> dict[str, int]:

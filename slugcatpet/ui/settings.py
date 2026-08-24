@@ -1,13 +1,18 @@
 """设置窗：猫增删/环境单选/HUD 开关，关窗即写盘。"""
 from __future__ import annotations
-from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-                               QCheckBox, QRadioButton, QButtonGroup, QFrame, QDialog)
+from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QPushButton,
+                               QCheckBox, QRadioButton, QButtonGroup, QFrame, QDialog, QDoubleSpinBox,
+                               QScrollArea, QSpinBox)
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QGuiApplication
 
 from ..cats import REGISTRY
 from ..i18n import t
 from .._paths import resource_dir
-from ..window import MAX_PETS
+from ..window import (MAX_PETS, EDGE_OFFSET_KEYS, MAX_DISPLAY_SCALE, MIN_DISPLAY_SCALE,
+                      display_scale, edge_offsets)
+from ..control.keymap import (DEFAULT_KEYBINDS, MOVEMENT_ACTIONS, key_display_name,
+                              key_name_from_qt, load_key_names, save_key_names)
 from .catmenu import variant_label, pet_label
 from .dialogs import ConfirmDialog, PickDialog
 
@@ -24,6 +29,12 @@ _QSS = (
     "border-radius:5px;padding:4px 12px;}"
     "QPushButton:enabled:hover{background:rgba(80,100,70,255);}"
     "QPushButton:disabled{color:#777;background:rgba(45,48,52,255);}"
+    "QSpinBox{color:#e8f5d8;background:#262b22;border:1px solid #52633f;"
+    "border-radius:4px;padding:2px 4px;}"
+    "QScrollArea{background:transparent;border:none;}"
+    "QScrollBar:vertical{background:#262b22;width:8px;margin:0;border-radius:4px;}"
+    "QScrollBar::handle:vertical{background:#52633f;border-radius:4px;}"
+    "QScrollBar::add-line:vertical,QScrollBar::sub-line:vertical{height:0;}"
     "QCheckBox{color:#e8f5d8;}"
     "QRadioButton{color:#e8f5d8;spacing:8px;}"
     "QRadioButton::indicator{width:16px;height:16px;border-radius:8px;"
@@ -34,21 +45,26 @@ _QSS = (
 
 
 class SettingsWindow(QWidget):
-    def __init__(self, window, hud, write_state):
+    def __init__(self, window, hud, tabbar, write_state):
         super().__init__()
         self._window = window
         self._hud = hud
+        self._tabbar = tabbar
         self._write_state = write_state
         window._settings_panel = self    # 供 window 反向同步世界态
         self.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.WindowStaysOnTopHint)
         self.setWindowTitle(t("settings_title"))
         self.setStyleSheet(_QSS)
         self.setMinimumWidth(280)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self._outer = QVBoxLayout(self)
         self._outer.setContentsMargins(16, 14, 16, 14)
         self._outer.setSpacing(10)
         self._body = None
+        self._scroll = None
         self._dlg = None                 # 弹窗单例守卫
+        self._capture_action = None
+        self._key_buttons = {}
         self._rebuild()
 
     def open(self):
@@ -63,10 +79,10 @@ class SettingsWindow(QWidget):
 
     # 内容重建
     def _rebuild(self):
-        if self._body is not None:
-            self._outer.removeWidget(self._body)
-            self._body.setParent(None)
-            self._body.deleteLater()
+        if self._scroll is not None:
+            self._outer.removeWidget(self._scroll)
+            self._scroll.setParent(None)
+            self._scroll.deleteLater()
         self._body = QWidget()
         v = QVBoxLayout(self._body)
         v.setContentsMargins(0, 0, 0, 0)
@@ -76,8 +92,28 @@ class SettingsWindow(QWidget):
         self._section_env(v)
         v.addWidget(self._divider())
         self._section_hud(v)
-        self._outer.addWidget(self._body)
+        v.addWidget(self._divider())
+        self._section_size(v)
+        v.addWidget(self._divider())
+        self._section_keys(v)
+        v.addWidget(self._divider())
+        self._section_bounds(v)
+        self._scroll = QScrollArea()
+        self._scroll.setWidgetResizable(True)
+        self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._scroll.setWidget(self._body)
+        self._outer.addWidget(self._scroll)
+        self._resize_scroll_to_screen()
         self.adjustSize()
+
+    def _resize_scroll_to_screen(self):
+        self._body.layout().activate()
+        wanted = self._body.sizeHint().height() + 2
+        screen = QGuiApplication.primaryScreen()
+        limit = 700
+        if screen is not None:
+            limit = max(260, int(screen.availableGeometry().height() * 0.82))
+        self._scroll.setMaximumHeight(min(wanted, limit))
 
     @staticmethod
     def _header(text):
@@ -174,10 +210,136 @@ class SettingsWindow(QWidget):
         chk.toggled.connect(self._on_hud_toggled)
         v.addWidget(chk)
 
+        chk_tab = QCheckBox(t("settings_show_tabbar"))
+        chk_tab.setChecked(self._tabbar.isVisible())
+        chk_tab.toggled.connect(self._on_tabbar_toggled)
+        v.addWidget(chk_tab)
+
     def _on_hide_fs_toggled(self, checked):
         self._window._params["hide_on_fullscreen"] = checked
         if not checked and getattr(self._window, "_envwatch", None):
             self._window._envwatch._check_fullscreen()
+
+    def _section_size(self, v):
+        v.addWidget(self._header(t("settings_size_section")))
+        hint = QLabel(t("settings_size_hint"))
+        hint.setObjectName("dim")
+        v.addWidget(hint)
+        row = QHBoxLayout()
+        row.addWidget(QLabel(t("settings_size_scale")))
+        spin = QDoubleSpinBox()
+        spin.setRange(MIN_DISPLAY_SCALE, MAX_DISPLAY_SCALE)
+        spin.setSingleStep(0.25)
+        spin.setDecimals(2)
+        spin.setSuffix("x")
+        spin.setValue(display_scale(self._window._params, self._window.layout_data.canvas_scale))
+        spin.valueChanged.connect(self._on_size_changed)
+        row.addWidget(spin)
+        v.addLayout(row)
+
+    def _on_size_changed(self, value):
+        self._window.set_display_scale(value)
+        self._write_state()
+
+    def _section_keys(self, v):
+        v.addWidget(self._header(t("settings_keys_section")))
+        hint = QLabel(t("settings_keys_hint"))
+        hint.setObjectName("dim")
+        v.addWidget(hint)
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(8)
+        grid.setVerticalSpacing(6)
+        names = load_key_names()
+        self._key_buttons = {}
+        for row, action in enumerate(MOVEMENT_ACTIONS):
+            grid.addWidget(QLabel(t(f"settings_key_{action}")), row, 0)
+            btn = QPushButton()
+            btn.clicked.connect(lambda _checked=False, a=action: self._begin_key_capture(a))
+            grid.addWidget(btn, row, 1)
+            self._key_buttons[action] = btn
+        self._refresh_key_buttons(names)
+        reset = QPushButton(t("settings_keys_reset"))
+        reset.clicked.connect(self._reset_movement_keys)
+        grid.addWidget(reset, len(MOVEMENT_ACTIONS), 0, 1, 2)
+        v.addLayout(grid)
+
+    def _refresh_key_buttons(self, names=None, capture_action=None):
+        names = load_key_names() if names is None else names
+        for action, btn in self._key_buttons.items():
+            if action == capture_action:
+                btn.setText(t("settings_keys_press"))
+            else:
+                btn.setText(key_display_name(action, names).upper())
+
+    def _reload_control_hud_keymap(self):
+        hud = getattr(self._window, "_control_hud", None)
+        if hud is not None:
+            hud.reload_keymap()
+
+    def _begin_key_capture(self, action):
+        self._capture_action = action
+        self._refresh_key_buttons(capture_action=action)
+        self.activateWindow()
+        self.setFocus(Qt.FocusReason.OtherFocusReason)
+
+    def keyPressEvent(self, ev):
+        if self._capture_action is not None:
+            if ev.key() == Qt.Key.Key_Escape:
+                self._cancel_key_capture()
+                return
+            name = key_name_from_qt(ev.key())
+            if name is not None:
+                self._set_movement_key(self._capture_action, name)
+                return
+        super().keyPressEvent(ev)
+
+    def _cancel_key_capture(self):
+        self._capture_action = None
+        self._refresh_key_buttons()
+
+    def _set_movement_key(self, action, name):
+        names = load_key_names()
+        names[action] = name
+        names = save_key_names(names)
+        self._capture_action = None
+        self._refresh_key_buttons(names)
+        self._reload_control_hud_keymap()
+
+    def _reset_movement_keys(self):
+        names = load_key_names()
+        for action in MOVEMENT_ACTIONS:
+            names[action] = DEFAULT_KEYBINDS[action]
+        names = save_key_names(names)
+        self._capture_action = None
+        self._refresh_key_buttons(names)
+        self._reload_control_hud_keymap()
+
+    def _section_bounds(self, v):
+        v.addWidget(self._header(t("settings_bounds_section")))
+        hint = QLabel(t("settings_bounds_hint"))
+        hint.setObjectName("dim")
+        v.addWidget(hint)
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(8)
+        grid.setVerticalSpacing(6)
+        labels = {key: t(f"settings_bounds_{key}") for key in EDGE_OFFSET_KEYS}
+        current = edge_offsets(self._window._params)
+        for row, key in enumerate(EDGE_OFFSET_KEYS):
+            grid.addWidget(QLabel(labels[key]), row, 0)
+            spin = QSpinBox()
+            spin.setRange(0, 512)
+            spin.setSuffix(" px")
+            spin.setValue(current.get(key, 0))
+            spin.valueChanged.connect(lambda value, k=key: self._on_offset_changed(k, value))
+            grid.addWidget(spin, row, 1)
+        v.addLayout(grid)
+
+    def _on_offset_changed(self, key, value):
+        offsets = dict(self._window._params.get("screen_offsets") or {})
+        offsets[key] = int(value)
+        self._window._params["screen_offsets"] = offsets
+        self._window.apply_current_screen_geometry()
+        self._write_state()
 
     # 增删走卡片弹窗（open()=WindowModal，不 exec）
     def _on_add(self):
@@ -223,6 +385,10 @@ class SettingsWindow(QWidget):
     def _on_hud_toggled(self, checked):
         if checked != self._hud.isVisible():
             self._hud.toggle_visible()
+
+    def _on_tabbar_toggled(self, checked):
+        if checked != self._tabbar.isVisible():
+            self._tabbar.toggle_visible()
 
     def refresh_env(self):
         """同步单选钮到真实环境态（未开窗跳过）。"""

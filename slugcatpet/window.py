@@ -2,9 +2,10 @@
 from __future__ import annotations
 import os
 import random
+import sys
 from PySide6.QtWidgets import QWidget
 from PySide6.QtCore import Qt, QTimer, QElapsedTimer, QRect, QPoint, QPointF, QRectF
-from PySide6.QtGui import QPainter, QColor, QGuiApplication, QCursor
+from PySide6.QtGui import QPainter, QColor, QGuiApplication, QCursor, QRegion
 
 from .behavior import tuning
 from .rendering.atlas import AtlasSet
@@ -19,6 +20,8 @@ from .world.items import ItemInteractionMixin
 from .world.enums import ItemState
 
 MAX_PETS = 3
+MIN_DISPLAY_SCALE = 1.0
+MAX_DISPLAY_SCALE = 6.0
 
 STONE_FAST_REDRAW = 3.0    # 速度超此整窗重绘
 
@@ -26,11 +29,16 @@ GRAV_EASE = 0.08              # 重力缓动率（~1s 过渡）
 
 # 地板下渲染余量
 GROUND_INSET = 16.0
+EDGE_OFFSET_KEYS = ("left", "top", "right", "bottom")
 
 # 窗口抖动
 SHAKE_DECAY = 0.8
 SHAKE_MAX = 6.0
 SHAKE_EPS = 0.05
+
+MASK_PET_PAD = 40.0
+MASK_ITEM_PAD = 20.0
+MASK_ITEM_RADIUS_FALLBACK = 15.0
 
 
 def compute_geometry(area: QRect, geo: QRect, canvas_scale: int) -> dict:
@@ -39,11 +47,72 @@ def compute_geometry(area: QRect, geo: QRect, canvas_scale: int) -> dict:
     # Fix PySide6 Wayland availableGeometry bug where width/height don't subtract the offset
     true_aw = min(area.width(), geo.width() - (area.x() - geo.x()))
     true_ah = min(area.height(), geo.height() - (area.y() - geo.y()))
-    
-    avail_below = max(0, (geo.y() + geo.height()) - (area.y() + true_ah))
-    inset_dev = avail_below if avail_below > 0 else int(round(GROUND_INSET * s))
-    return {"WL": true_aw / s, "HL": true_ah / s, "ground_inset": inset_dev,
-            "win_w": true_aw, "win_h": true_ah + inset_dev}
+
+    reserved_below = max(0, (geo.y() + geo.height()) - (area.y() + true_ah))
+    desired_inset = int(round(GROUND_INSET * s))
+    if reserved_below > 0:
+        # A bottom panel/dock starts at the work-area edge. Keep the physics
+        # floor there. With manual bottom offsets, the reserved area is already
+        # the user's chosen safe slack, so allow drawing through all of it; small
+        # scales otherwise clip sprite parts below the floor.
+        inset_dev = reserved_below
+        floor_dev = true_ah
+        win_h = true_ah + inset_dev
+    else:
+        inset_dev = desired_inset
+        floor_dev = true_ah
+        win_h = true_ah + inset_dev
+    return {"WL": true_aw / s, "HL": floor_dev / s, "ground_inset": inset_dev,
+            "win_w": true_aw, "win_h": win_h}
+
+
+def display_scale(params: dict | None = None, fallback: float = 2.0) -> float:
+    """Screen pixels per logical world pixel."""
+    raw = os.environ.get("SLUGCATPET_SCALE")
+    if raw is None and isinstance(params, dict):
+        raw = params.get("display_scale", fallback)
+    try:
+        return clampf(float(raw), MIN_DISPLAY_SCALE, MAX_DISPLAY_SCALE)
+    except (TypeError, ValueError):
+        return clampf(float(fallback), MIN_DISPLAY_SCALE, MAX_DISPLAY_SCALE)
+
+
+def edge_offsets(params: dict | None = None) -> dict[str, int]:
+    """Manual screen-edge offsets in device pixels."""
+    out = {k: 0 for k in EDGE_OFFSET_KEYS}
+    for key in EDGE_OFFSET_KEYS:
+        for env_key in (f"SLUGCATPET_OFFSET_{key.upper()}",
+                        f"SLUGCATPET_{key.upper()}_OFFSET"):
+            if env_key in os.environ:
+                try:
+                    out[key] = max(0, int(float(os.environ[env_key])))
+                except ValueError:
+                    pass
+                break
+    if "SLUGCATPET_BOTTOM_PANEL_PX" in os.environ:
+        try:
+            out["bottom"] = max(0, int(float(os.environ["SLUGCATPET_BOTTOM_PANEL_PX"])))
+        except ValueError:
+            pass
+    saved = (params or {}).get("screen_offsets")
+    if isinstance(saved, dict):
+        for key in EDGE_OFFSET_KEYS:
+            try:
+                out[key] = max(0, int(float(saved.get(key, out[key]))))
+            except (TypeError, ValueError):
+                pass
+    return out
+
+
+def apply_edge_offsets(area: QRect, offsets: dict[str, int]) -> QRect:
+    """Shrink the work area by user-provided edge offsets."""
+    left = max(0, int(offsets.get("left", 0)))
+    top = max(0, int(offsets.get("top", 0)))
+    right = max(0, int(offsets.get("right", 0)))
+    bottom = max(0, int(offsets.get("bottom", 0)))
+    return QRect(area.x() + left, area.y() + top,
+                 max(1, area.width() - left - right),
+                 max(1, area.height() - top - bottom))
 
 
 def _clamp_chunk_to_bounds(c, WL, HL):
@@ -92,10 +161,10 @@ class PetWindow(EffectsMixin, ItemInteractionMixin, QWidget):
             self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, False)
             self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
 
-        s = self.layout_data.canvas_scale
+        s = display_scale(self._params, self.layout_data.canvas_scale)
         screen = QGuiApplication.primaryScreen()
-        area = screen.availableGeometry()
         geo = screen.geometry()
+        area = apply_edge_offsets(geo, edge_offsets(self._params))
         geom = compute_geometry(area, geo, s)
         self._area = area                     # 工作区（不含下延带）
         self._scale = s
@@ -128,6 +197,7 @@ class PetWindow(EffectsMixin, ItemInteractionMixin, QWidget):
         self._fruit_seed = 0
         self._dragged_fruit = None
         self._drag_last = None
+        self._fruit_drag_from_place = False
 
         # 放石头
         self.stones = []
@@ -142,6 +212,7 @@ class PetWindow(EffectsMixin, ItemInteractionMixin, QWidget):
         self._dragged_slimemold = None
         self._slime_drag_last = None
         self._slime_preview = None
+        self._slime_preview_ready = False
 
         # 放蝙蝠
         self.batflies = []
@@ -180,6 +251,8 @@ class PetWindow(EffectsMixin, ItemInteractionMixin, QWidget):
         self._prev_dirty = None
         self._fx_active_prev = False
         self._fx_active = False
+        self._linux_masked = False
+        self._prev_mask_region = None
         self.follow_cursor = True
         self.pets = []
         self._build_pets()
@@ -253,69 +326,87 @@ class PetWindow(EffectsMixin, ItemInteractionMixin, QWidget):
         return dx / self._scale, dy / self._scale
 
     def cursor_logical(self):
+        override = getattr(self, "_cursor_logical_override", None)
+        if override is not None:
+            return override
         g = self.mapFromGlobal(QCursor.pos())
         return self.to_logical(g.x(), g.y())
 
     # ── 动态穿透 ──
-    def _update_passthrough(self):
-        if self.debug:
-            return
+    def _dragging_item(self):
+        return any(item is not None for item in (
+            self._dragged_fruit,
+            self._dragged_stone,
+            self._dragged_slimemold,
+            self._dragged_batfly,
+        ))
+
+    def _cursor_over_item(self, cur):
+        return (self._fruit_at(cur) is not None
+                or self._stone_at(cur) is not None
+                or self._slimemold_at(cur) is not None
+                or self._batfly_at(cur) is not None)
+
+    def _cursor_over_pet(self, cur):
         from .control.mouse import is_over
-        cur = self.cursor_logical()
-        active = any(pet.behavior is not None and pet.behavior.grab.active for pet in self.pets)
-        over_body = any(
+        return any(
             ((pet.behavior is None) or not pet.behavior.blocks_interaction())
             and is_over(pet.body, pet.gfx, cur, pad=6.0)
             for pet in self.pets)
-        dragging_fruit = self._dragged_fruit is not None
-        over_fruit = self._fruit_at(cur) is not None
-        dragging_stone = self._dragged_stone is not None
-        over_stone = self._stone_at(cur) is not None
-        dragging_slime = self._dragged_slimemold is not None
-        over_slime = self._slimemold_at(cur) is not None
-        dragging_batfly = self._dragged_batfly is not None
-        over_batfly = self._batfly_at(cur) is not None
-        
-        want = not (active or dragging_fruit or over_fruit or dragging_stone or over_stone
-                    or dragging_slime or over_slime or dragging_batfly or over_batfly or over_body)
-        
-        if self._place_mode:
-            want = False
+
+    def _wants_passthrough(self, cur):
+        active_grab = any(pet.behavior is not None and pet.behavior.grab.active
+                          for pet in self.pets)
+        interactive = (active_grab or self._dragging_item() or self._cursor_over_item(cur)
+                       or self._cursor_over_pet(cur))
+        return not self._place_mode and not interactive
+
+    def _update_passthrough(self):
+        if self.debug:
+            return
+        cur = self.cursor_logical()
+        want = self._wants_passthrough(cur)
         if want != self._passthrough:
             self._passthrough = want
             if not self._hwnd:
                 self._hwnd = int(self.winId())
             from .control.mouse import set_passthrough
             set_passthrough(self._hwnd, want)
-            
-        import sys
+
         if sys.platform.startswith("linux"):
-            if not want:
-                if getattr(self, '_linux_masked', False):
-                    self.clearMask()
-                    self._linux_masked = False
-            else:
-                from PySide6.QtGui import QRegion
-                from PySide6.QtCore import QRect
-                region = QRegion()
-                for p in self.pets:
-                    xs = [p.body.chunk0.x, p.body.chunk1.x, p.gfx.head.x]
-                    ys = [p.body.chunk0.y, p.body.chunk1.y, p.gfx.head.y]
-                    minx, maxx = int(min(xs)), int(max(xs))
-                    miny, maxy = int(min(ys)), int(max(ys))
-                    rect = QRect(minx - 40, miny - 40, maxx - minx + 80, maxy - miny + 80)
-                    region = region.united(QRegion(rect))
-                for arr in (self.fruits, self.stones, self.slimemolds, self.batflies):
-                    for item in arr:
-                        r = getattr(item, "rad", 15)
-                        rect = QRect(int(item.x - r - 20), int(item.y - r - 20), int(r*2 + 40), int(r*2 + 40))
-                        region = region.united(QRegion(rect))
-                
-                # Combine with previous region to clear Wayland ghosting trails
-                mask_region = region.united(self._prev_mask_region) if hasattr(self, '_prev_mask_region') else region
-                self.setMask(mask_region)
-                self._prev_mask_region = region
-                self._linux_masked = True
+            self._sync_linux_input_mask(want)
+
+    def _device_rect(self, x, y, w, h):
+        scale = self._scale
+        return QRect(int(x * scale), int(y * scale), int(w * scale), int(h * scale))
+
+    def _sync_linux_input_mask(self, passthrough):
+        if not passthrough:
+            if self._linux_masked:
+                self.clearMask()
+                self._linux_masked = False
+            self._prev_mask_region = None
+            return
+
+        region = QRegion()
+        for pet in self.pets:
+            xs = [pet.body.chunk0.x, pet.body.chunk1.x, pet.gfx.head.x]
+            ys = [pet.body.chunk0.y, pet.body.chunk1.y, pet.gfx.head.y]
+            left = min(xs) - MASK_PET_PAD
+            top = min(ys) - MASK_PET_PAD
+            width = max(xs) - min(xs) + MASK_PET_PAD * 2
+            height = max(ys) - min(ys) + MASK_PET_PAD * 2
+            region = region.united(QRegion(self._device_rect(left, top, width, height)))
+        for item in (*self.fruits, *self.stones, *self.slimemolds, *self.batflies):
+            radius = getattr(item, "rad", MASK_ITEM_RADIUS_FALLBACK) + MASK_ITEM_PAD
+            region = region.united(QRegion(self._device_rect(item.x - radius, item.y - radius,
+                                                             radius * 2, radius * 2)))
+
+        mask_region = (region.united(self._prev_mask_region)
+                       if self._prev_mask_region is not None else region)
+        self.setMask(mask_region)
+        self._prev_mask_region = region
+        self._linux_masked = True
 
     # ── 帧循环 ──
     _PHYS_DT = 1.0 / 40.0
@@ -363,7 +454,6 @@ class PetWindow(EffectsMixin, ItemInteractionMixin, QWidget):
         self._last_ms = now
         if dt <= 0.0:
             return
-        pass
         self._update_passthrough()
         self._advance(min(dt, self._MAX_DT))
         region = self._update_region()
@@ -440,6 +530,7 @@ class PetWindow(EffectsMixin, ItemInteractionMixin, QWidget):
     # ── 环境适应 ──
     def apply_workspace(self, area, geo):
         """工作区变化，重算几何并夹回物体。"""
+        area = apply_edge_offsets(geo, edge_offsets(self._params))
         geom = compute_geometry(area, geo, self._scale)
         self.world_version += 1
         self.geometry_version += 1
@@ -452,6 +543,18 @@ class PetWindow(EffectsMixin, ItemInteractionMixin, QWidget):
         self._reground(geom["WL"], geom["HL"])
         self._prev_dirty = None
         self.update()
+
+    def apply_current_screen_geometry(self):
+        """Re-read current screen geometry and user edge offsets."""
+        screen = QGuiApplication.primaryScreen()
+        if screen is not None:
+            self.apply_workspace(screen.availableGeometry(), screen.geometry())
+
+    def set_display_scale(self, scale: float):
+        """Set render/world scale and re-fit to the current screen."""
+        self._scale = clampf(float(scale), MIN_DISPLAY_SCALE, MAX_DISPLAY_SCALE)
+        self._params["display_scale"] = self._scale
+        self.apply_current_screen_geometry()
 
     def _reground(self, WL, HL):
         """同步各猫与物体到新地面。"""
@@ -1057,7 +1160,7 @@ class PetWindow(EffectsMixin, ItemInteractionMixin, QWidget):
                 elif self._place_kind == "batfly":
                     self.place_batfly(lx, ly)
                 else:
-                    self.place_fruit(lx, ly)
+                    self.place_fruit(lx, ly, drag_until_release=True)
             elif e.button() == Qt.MouseButton.RightButton:
                 self._exit_place_mode()
             return

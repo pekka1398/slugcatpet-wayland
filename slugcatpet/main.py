@@ -1,4 +1,4 @@
-"""启动应用，管理 PetWindow、TabBar、托盘、全局热键。"""
+"""启动应用，管理 PetWindow、GTK 侧边栏、托盘、全局热键。"""
 from __future__ import annotations
 import sys
 import os
@@ -13,7 +13,7 @@ from PySide6.QtCore import QTimer
 
 from .cats import default_def
 from .window import PetWindow
-from .ui.tabbar import TabBar
+from .ui.gtk_tabbar import GtkLayerTabBar
 from .ui.hud import HudPanel
 from .ui.settings import SettingsWindow
 from .control.hotkey import HotkeyFilter, MOD_CONTROL, MOD_ALT, HK_PLACE_ESC
@@ -138,12 +138,17 @@ def main():
     hud = HudPanel(pet, params)
     # 不在启动时显示面板，由用户手动从托盘打开
 
-    tab = TabBar(pet, app, params)
-    tab.hide()
+    tab_visible = bool(params.get("tab_visible", False))
+    params["tab_visible"] = tab_visible
+    tab = GtkLayerTabBar(pet, app, params)
+    if tab_visible:
+        tab.show()
+    else:
+        tab.hide()
 
     def _write_state():
         """序列化状态并写盘。"""
-        params["tab_y"] = tab._y
+        params["tab_y"] = tab.y
         params["tab_expanded"] = tab.expanded
         params["hud_x"] = hud.x()
         params["hud_y"] = hud.y()
@@ -157,7 +162,7 @@ def main():
         params["schema_version"] = SCHEMA_VERSION
         _save_params(params)
 
-    settings = SettingsWindow(pet, hud, _write_state)
+    settings = SettingsWindow(pet, hud, tab, _write_state)
     pet._hud = hud                       # 供增删猫后 rebuild_rows
     pet._pets_changed_cb = _write_state  # 增删猫后写盘
     pet._open_settings_cb = settings.open  # 设置入口共用
@@ -172,7 +177,7 @@ def main():
     act_settings.triggered.connect(settings.open)
     act_hud = QAction(t("tray_hud"))
     act_hud.triggered.connect(hud.toggle_visible)
-    act_tab = QAction("显示/隐藏侧边栏 (Toggle TabBar)")
+    act_tab = QAction(t("tray_tabbar"))
     act_tab.triggered.connect(tab.toggle_visible)
     act_pet = QAction("显示/隐藏桌宠 (Toggle Pet)")
     def toggle_pet():
@@ -239,6 +244,7 @@ def main():
             pass
         envwatch.stop()
         autosave.stop()
+        app._gtk3_bridge.close()
         _write_state()
         hotkey.unregister_all()
     app.aboutToQuit.connect(_cleanup)
