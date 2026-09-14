@@ -364,17 +364,11 @@ class BehaviorFSM:
             self._seekhpole_break()
         self._hibernating = False
         self.body.food_eat(-tuning.FOOD_KILL_PENALTY)
-        if self.body.karma > 0 or self.body.karma_bottomed():
-            self.body.karma_drop()    # 工匠锁底也照常空转复活
-            self.body.temper_shift(tuning.TEMPER_KILL_REVIVED)
-            self.body.die()
-            self.gfx.dead = True
-            self._transition("Dead")
-            self._revive_timer = tuning.REVIVE_TICKS
-        else:
-            self.body.die()
-            self._transition("Dead")
-            self._revive_timer = 0
+        # 右键菜单"杀掉此猫"确认后就是真死，不走业力复活/转世那套。
+        self.body.die()
+        self.gfx.dead = True
+        self._transition("Dead")
+        self._revive_timer = 0
 
     def kill_cold(self):
         """冻死：环境致死，转世复活，不计好感。"""
