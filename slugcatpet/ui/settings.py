@@ -138,7 +138,6 @@ class SettingsWindow(QWidget):
     def _section_cats(self, v):
         v.addWidget(self._header(t("settings_cats_section")))
         pets = list(self._window.pets)
-        can_remove = len(pets) > 1
         for pet in pets:
             row = QHBoxLayout()
             row.setSpacing(8)
@@ -148,9 +147,6 @@ class SettingsWindow(QWidget):
             for btn in self._pet_action_buttons(pet):
                 row.addWidget(btn)
             rm = QPushButton(t("settings_remove"))
-            rm.setEnabled(can_remove)
-            if not can_remove:
-                rm.setToolTip(t("settings_min_pets"))
             rm.clicked.connect(lambda _c, p=pet: self._on_remove(p))
             row.addWidget(rm)
             v.addLayout(row)

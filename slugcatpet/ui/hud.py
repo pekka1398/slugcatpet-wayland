@@ -40,7 +40,10 @@ class HudPanel(QWidget):
         self.hide()
 
     def _pets(self):
-        return getattr(self.pet, "pets", None) or [self.pet]
+        pets = getattr(self.pet, "pets", None)
+        if pets is None:
+            return [self.pet]
+        return pets   # 可以是空列表：0 只猫时 HUD 不画任何行
 
     def _build(self):
         outer = QVBoxLayout(self)

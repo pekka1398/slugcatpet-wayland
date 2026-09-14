@@ -910,8 +910,8 @@ class PetWindow(EffectsMixin, ItemInteractionMixin, QWidget):
         return pet
 
     def remove_pet(self, pet):
-        """移除一只猫，成功返回 True。"""
-        if len(self.pets) <= 1 or pet not in self.pets:
+        """移除一只猫，成功返回 True；允许移除到 0 只。"""
+        if pet not in self.pets:
             return False
         if getattr(pet, "controlled", False):
             self.stop_control()               # 先退出控制再移除
@@ -1074,6 +1074,8 @@ class PetWindow(EffectsMixin, ItemInteractionMixin, QWidget):
             if self.water_y != self.water_target or surf.energy() > tuning.WATER_STILL_EPS:
                 xs.append(0.0); xs.append(self._WL)
                 ys.append(self.water_y - 40.0); ys.append(self._HL + self._ground_inset)
+        if not xs:
+            return QRect(0, 0, 0, 0)   # 0 只猫/道具时无物可画
         s = self._scale
         pad = 60
         x0 = int((min(xs) - pad) * s); y0 = int((min(ys) - pad) * s)
