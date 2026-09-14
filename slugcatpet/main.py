@@ -30,6 +30,7 @@ HK_HUD = 3
 _APP_PARAMS = user_dir() / "app.json"
 SCHEMA_VERSION = 2   # pets[] 分猫存档
 AUTOSAVE_MS = 60_000
+IS_WAYLAND = bool(os.environ.get("WAYLAND_DISPLAY"))
 
 
 def _tray_icon() -> QIcon:
@@ -132,8 +133,13 @@ def main():
         return
 
     pet = PetWindow(params=params)
-    from .gtk3_bridge import GTK3Bridge
-    app._gtk3_bridge = GTK3Bridge(pet)
+    if IS_WAYLAND:
+        from .gtk3_bridge import GTK3Bridge
+        app._gtk3_bridge = GTK3Bridge(pet)
+    else:
+        # X11：Qt 自身已能定位/置顶/穿透，不需要 GTK Layer Shell 桥接
+        app._gtk3_bridge = None
+        pet.show()
 
     hud = HudPanel(pet, params)
     # 不在启动时显示面板，由用户手动从托盘打开
@@ -181,11 +187,17 @@ def main():
     act_tab.triggered.connect(tab.toggle_visible)
     act_pet = QAction("显示/隐藏桌宠 (Toggle Pet)")
     def toggle_pet():
-        win = app._gtk3_bridge.gtk_win
-        if win.get_visible():
-            win.hide()
+        if app._gtk3_bridge is not None:
+            win = app._gtk3_bridge.gtk_win
+            if win.get_visible():
+                win.hide()
+            else:
+                win.show_all()
         else:
-            win.show_all()
+            if pet.isVisible():
+                pet.hide()
+            else:
+                pet.show()
     act_pet.triggered.connect(toggle_pet)
     act_quit = QAction(t("tray_quit"))
     act_quit.triggered.connect(app.quit)
@@ -244,7 +256,8 @@ def main():
             pass
         envwatch.stop()
         autosave.stop()
-        app._gtk3_bridge.close()
+        if app._gtk3_bridge is not None:
+            app._gtk3_bridge.close()
         _write_state()
         hotkey.unregister_all()
     app.aboutToQuit.connect(_cleanup)

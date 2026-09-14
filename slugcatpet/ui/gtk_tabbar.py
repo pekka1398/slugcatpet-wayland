@@ -1,16 +1,23 @@
-"""GTK layer-shell side tabbar."""
+"""GTK layer-shell side tabbar（X11 下退化为普通置顶窗口）。"""
 from __future__ import annotations
 
+import os
 import cairo
 import gi
 
 gi.require_version("Gtk", "3.0")
 gi.require_version("Gdk", "3.0")
 gi.require_version("GdkPixbuf", "2.0")
-gi.require_version("GtkLayerShell", "0.1")
-from gi.repository import Gtk, Gdk, GdkPixbuf, GLib, GtkLayerShell
+from gi.repository import Gtk, Gdk, GdkPixbuf, GLib
 from PySide6.QtCore import QBuffer, QByteArray, QIODevice, QRect
 from PySide6.QtGui import QGuiApplication
+
+_IS_WAYLAND = bool(os.environ.get("WAYLAND_DISPLAY"))
+if _IS_WAYLAND:
+    gi.require_version("GtkLayerShell", "0.1")
+    from gi.repository import GtkLayerShell
+else:
+    GtkLayerShell = None
 
 from ..i18n import t
 from .place_icons import COLLAPSED_H, COLLAPSED_W, EXPANDED_H, EXPANDED_W, make_place_icon
@@ -135,7 +142,7 @@ class GtkLayerTabBar:
         self._toast_win.set_title("slugcatpet-tabbar-toast")
         self._toast_win.set_decorated(False)
         self._toast_win.set_app_paintable(True)
-        self._init_layer_window(self._toast_win, layer=GtkLayerShell.Layer.OVERLAY)
+        self._init_layer_window(self._toast_win, layer=(GtkLayerShell.Layer.OVERLAY if _IS_WAYLAND else None))
         self._toast_label = Gtk.Label()
         self._toast_label.get_style_context().add_class("slugcat-toast")
         self._toast_win.add(self._toast_label)
@@ -146,7 +153,17 @@ class GtkLayerTabBar:
     def y(self):
         return self._y
 
-    def _init_layer_window(self, win, layer=GtkLayerShell.Layer.TOP, full_height=False):
+    def _init_layer_window(self, win, layer=None, full_height=False):
+        if not _IS_WAYLAND:
+            # X11：普通置顶窗口，靠 gtk_win.move() 手动定位到屏幕右侧
+            win.set_type_hint(Gdk.WindowTypeHint.UTILITY)
+            win.set_keep_above(True)
+            win.stick()
+            win.set_skip_taskbar_hint(True)
+            win.set_skip_pager_hint(True)
+            return
+        if layer is None:
+            layer = GtkLayerShell.Layer.TOP
         GtkLayerShell.init_for_window(win)
         try:
             GtkLayerShell.set_namespace(win, "slugcatpet-tabbar")
@@ -201,10 +218,11 @@ class GtkLayerTabBar:
 
     def _sync_layer(self):
         self._refresh_screen()
-        try:
-            GtkLayerShell.set_exclusive_zone(self.gtk_win, 0)
-        except Exception:
-            pass
+        if _IS_WAYLAND:
+            try:
+                GtkLayerShell.set_exclusive_zone(self.gtk_win, 0)
+            except Exception:
+                pass
         self.gtk_win.set_default_size(self._width(), self._screen_h)
         if self._root is not None:
             self._root.set_size_request(self._width(), self._screen_h)
@@ -215,6 +233,11 @@ class GtkLayerTabBar:
         self._last_margin_top = margin
         if self._root is not None and self._content is not None:
             self._root.move(self._content, self._content_x(), margin)
+        if not _IS_WAYLAND:
+            area = _available_geometry()
+            x = area.x() + area.width() - self._surface_width()
+            y = self._screen_y + margin
+            self.gtk_win.move(x, y)
         self._sync_input_shape(margin)
 
     def _sync_input_shape(self, margin=None):
@@ -395,8 +418,14 @@ class GtkLayerTabBar:
         self._toast_label.set_text(msg)
         self._toast_label.show()
         width = self._width()
-        GtkLayerShell.set_margin(self._toast_win, GtkLayerShell.Edge.TOP, self._top_margin() + 10)
-        GtkLayerShell.set_margin(self._toast_win, GtkLayerShell.Edge.RIGHT, width + 8)
+        if _IS_WAYLAND:
+            GtkLayerShell.set_margin(self._toast_win, GtkLayerShell.Edge.TOP, self._top_margin() + 10)
+            GtkLayerShell.set_margin(self._toast_win, GtkLayerShell.Edge.RIGHT, width + 8)
+        else:
+            area = _available_geometry()
+            x = area.x() + area.width() - width - 8
+            y = self._screen_y + self._top_margin() + 10
+            self._toast_win.move(x, y)
         self._toast_win.show_all()
         if self._toast_source is not None:
             GLib.source_remove(self._toast_source)

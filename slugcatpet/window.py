@@ -1087,6 +1087,11 @@ class PetWindow(EffectsMixin, ItemInteractionMixin, QWidget):
                  tuning.BUBBLE_RGBA, ax=0.5, ay=0.5)
         p.restore()
 
+    def paintEvent(self, event):
+        """原生 Qt 绘制入口（X11 直显路径；Wayland 下由 GTK3Bridge 接管 update()）。"""
+        p = QPainter(self)
+        self.customPaint(p)
+
     def customPaint(self, p):
         # 图层序：果绳/烟 → 猫身 → 杆/手 → 果石黏菌蝠 → 水 → 灯 → 特效 → 雪
         try:
