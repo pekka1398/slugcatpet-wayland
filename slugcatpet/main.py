@@ -235,6 +235,20 @@ def main():
     hotkey.triggered.connect(_on_hotkey)
     app._hotkey = hotkey                          # 保持引用
 
+    if not IS_WAYLAND:
+        # X11：全局热键 Ctrl+Alt+P 开/关设置面板（唯一控制入口）
+        from .platform.x11_hotkey import X11HotkeyThread
+
+        def _toggle_settings():
+            if settings.isVisible():
+                settings.close()
+            else:
+                settings.open()
+        x11_hotkey = X11HotkeyThread()
+        x11_hotkey.triggered.connect(_toggle_settings)
+        x11_hotkey.start()
+        app._x11_hotkey = x11_hotkey              # 保持引用
+
     autosave = QTimer()
     autosave.timeout.connect(_write_state)
     autosave.start(AUTOSAVE_MS)
@@ -260,6 +274,9 @@ def main():
             app._gtk3_bridge.close()
         _write_state()
         hotkey.unregister_all()
+        if not IS_WAYLAND:
+            x11_hotkey.stop()
+            x11_hotkey.wait(1000)
     app.aboutToQuit.connect(_cleanup)
 
     sys.exit(app.exec())

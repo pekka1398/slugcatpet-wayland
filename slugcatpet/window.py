@@ -879,6 +879,12 @@ class PetWindow(EffectsMixin, ItemInteractionMixin, QWidget):
             pet.behavior.kill()
         elif not silent:                  # 静默消解不扣好感
             pet.behavior.kill_threat_canceled(by_saint)
+        self._refresh_settings_cats()
+
+    def _refresh_settings_cats(self):
+        sp = getattr(self, "_settings_panel", None)
+        if sp is not None and hasattr(sp, "refresh_cats"):
+            sp.refresh_cats()
 
     # ── 增删猫 ──
     def add_pet(self, variant="saint"):
@@ -952,7 +958,10 @@ class PetWindow(EffectsMixin, ItemInteractionMixin, QWidget):
             except RuntimeError:
                 pass
         menu = build_cat_menu(pet, self.pets, open_settings=self.open_settings, parent=self)
-        menu.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint)
+        # 保留 QMenu 内建的 Popup 类型（隐式抓鼠标、点外面自动关闭），
+        # 只加 StaysOnTop；原代码整个换成 Dialog 会把 Popup 行为拔掉，
+        # 导致菜单点哪都关不掉。
+        menu.setWindowFlags(menu.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
         menu.move(global_pos)
         menu.show()
         self._active_cat_menu = menu
@@ -1202,16 +1211,7 @@ class PetWindow(EffectsMixin, ItemInteractionMixin, QWidget):
         if not self.pets:
             return
         if e.button() == Qt.MouseButton.RightButton:
-            # 右键命中区同左键抓取
-            pos = self.to_logical(e.position().x(), e.position().y())
-            from .control.mouse import hit_test, GRAB_PAD
-            for pet in self.pets:
-                if pet.behavior is not None and pet.behavior.blocks_interaction():
-                    continue
-                name, _ = hit_test(pet.body, pet.gfx, pos, pad=GRAB_PAD)
-                if name is not None:
-                    self.open_cat_menu(pet, e.globalPosition().toPoint())
-                    return
+            # 右键在猫身上完全无反应；所有操作走设置面板（热键开关）。
             return
         if e.button() == Qt.MouseButton.LeftButton:
             pos = self.to_logical(e.position().x(), e.position().y())

@@ -138,6 +138,8 @@ class SettingsWindow(QWidget):
             name = QLabel(pet_label(pet, pets))
             row.addWidget(name)
             row.addStretch(1)
+            for btn in self._pet_action_buttons(pet):
+                row.addWidget(btn)
             rm = QPushButton(t("settings_remove"))
             rm.setEnabled(can_remove)
             if not can_remove:
@@ -152,6 +154,58 @@ class SettingsWindow(QWidget):
             add.setToolTip(t("settings_max_pets"))
         add.clicked.connect(self._on_add)
         v.addWidget(add)
+
+    def _pet_action_buttons(self, pet):
+        """按猫状态给出操作按钮（原右键菜单功能搬到这里）。"""
+        beh = pet.behavior
+        buttons = []
+        if beh is None:
+            return buttons
+        if getattr(pet, "controlled", False):
+            b = QPushButton(t("menu_exit_control"))
+            b.clicked.connect(lambda _c, p=pet: self._on_stop_control(p))
+            buttons.append(b)
+            return buttons
+        if beh.is_reincarnating():
+            b = QPushButton(t("menu_reincarnating"))
+            b.setEnabled(False)
+            buttons.append(b)
+            return buttons
+        if beh.is_truly_dead():
+            b = QPushButton(t("menu_reset_pet"))
+            b.clicked.connect(lambda _c, p=pet: self._on_respawn(p))
+            buttons.append(b)
+            return buttons
+        blocked = beh.blocks_interaction()
+        kill_btn = QPushButton(t("menu_kill_pet"))
+        kill_btn.setEnabled(not blocked and pet._kill_dialog is None)
+        kill_btn.clicked.connect(lambda _c, p=pet: self._on_kill(p))
+        buttons.append(kill_btn)
+        ctl_btn = QPushButton(t("menu_control_pet"))
+        ctl_btn.setEnabled(not blocked and pet._kill_dialog is None)
+        ctl_btn.clicked.connect(lambda _c, p=pet: self._on_control(p))
+        buttons.append(ctl_btn)
+        return buttons
+
+    def _on_kill(self, pet):
+        self._window.request_kill(pet)
+
+    def _on_control(self, pet):
+        self._window.start_control(pet)
+        self._rebuild()
+
+    def _on_stop_control(self, pet):
+        self._window.stop_control()
+        self._rebuild()
+
+    def _on_respawn(self, pet):
+        pet.respawn()
+        self._rebuild()
+
+    def refresh_cats(self):
+        """猫状态外部变化后（杀死确认/操控切换）刷新按钮。"""
+        if self.isVisible():
+            self._rebuild()
 
     def _section_env(self, v):
         v.addWidget(self._header(t("settings_env_section")))
