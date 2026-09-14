@@ -884,7 +884,9 @@ class PetWindow(EffectsMixin, ItemInteractionMixin, QWidget):
     def _refresh_settings_cats(self):
         sp = getattr(self, "_settings_panel", None)
         if sp is not None and hasattr(sp, "refresh_cats"):
-            sp.refresh_cats()
+            # 延后到本轮事件处理完（还在杀死确认弹窗 finished 回调栈里），
+            # 避免在弹窗收尾途中整体重建设置面板导致画面错乱。
+            QTimer.singleShot(0, sp.refresh_cats)
 
     # ── 增删猫 ──
     def add_pet(self, variant="saint"):

@@ -203,9 +203,16 @@ class SettingsWindow(QWidget):
         self._rebuild()
 
     def refresh_cats(self):
-        """猫状态外部变化后（杀死确认/操控切换）刷新按钮。"""
+        """猫状态外部变化后（杀死确认/操控切换）刷新按钮。
+        在窗口已开着时单纯 _rebuild()（哪怕补 show/raise）不会触发真正的
+        版面重新协商，窗口会被压得很小；只有真的 hide()→show() 一轮可见性
+        切换才会强制 WM/Qt 重新计算几何，所以这里干脆走一次隐藏再显示。"""
         if self.isVisible():
+            self.hide()
             self._rebuild()
+            self.show()
+            self.raise_()
+            self.activateWindow()
 
     def _section_env(self, v):
         v.addWidget(self._header(t("settings_env_section")))
