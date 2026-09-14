@@ -380,15 +380,9 @@ class PetWindow(EffectsMixin, ItemInteractionMixin, QWidget):
         scale = self._scale
         return QRect(int(x * scale), int(y * scale), int(w * scale), int(h * scale))
 
-    def _sync_linux_input_mask(self, passthrough):
-        if not passthrough:
-            if self._linux_masked:
-                self.clearMask()
-                self._linux_masked = False
-            self._prev_mask_region = None
-            return
-
-        region = QRegion()
+    def _mask_rects(self):
+        """贴/道具周围的命中矩形（device px），供穿透遮罩用。"""
+        rects = []
         for pet in self.pets:
             xs = [pet.body.chunk0.x, pet.body.chunk1.x, pet.gfx.head.x]
             ys = [pet.body.chunk0.y, pet.body.chunk1.y, pet.gfx.head.y]
@@ -396,16 +390,45 @@ class PetWindow(EffectsMixin, ItemInteractionMixin, QWidget):
             top = min(ys) - MASK_PET_PAD
             width = max(xs) - min(xs) + MASK_PET_PAD * 2
             height = max(ys) - min(ys) + MASK_PET_PAD * 2
-            region = region.united(QRegion(self._device_rect(left, top, width, height)))
+            rects.append(self._device_rect(left, top, width, height))
         for item in (*self.fruits, *self.stones, *self.slimemolds, *self.batflies):
             radius = getattr(item, "rad", MASK_ITEM_RADIUS_FALLBACK) + MASK_ITEM_PAD
-            region = region.united(QRegion(self._device_rect(item.x - radius, item.y - radius,
-                                                             radius * 2, radius * 2)))
+            rects.append(self._device_rect(item.x - radius, item.y - radius,
+                                           radius * 2, radius * 2))
+        return rects
 
-        mask_region = (region.united(self._prev_mask_region)
-                       if self._prev_mask_region is not None else region)
-        self.setMask(mask_region)
-        self._prev_mask_region = region
+    def _sync_linux_input_mask(self, passthrough):
+        if not sys.platform.startswith("linux") or os.environ.get("WAYLAND_DISPLAY"):
+            # Wayland：真正的输入穿透由 GTK3Bridge/input_shape_combine_region 处理，
+            # 这里的 pet widget 从不 show()，setMask 对渲染无副作用，保留旧行为即可。
+            if not passthrough:
+                if self._linux_masked:
+                    self.clearMask()
+                    self._linux_masked = False
+                self._prev_mask_region = None
+                return
+            region = QRegion()
+            for r in self._mask_rects():
+                region = region.united(QRegion(r))
+            mask_region = (region.united(self._prev_mask_region)
+                           if self._prev_mask_region is not None else region)
+            self.setMask(mask_region)
+            self._prev_mask_region = region
+            self._linux_masked = True
+            return
+
+        # X11：改用 XShape 的 Input 通道，只裁点击命中区，不动可视渲染
+        # （Qt 的 setMask 会连带裁掉超出遮罩框的贴身部件，如尾巴/舌头/甩出的残影）。
+        from .platform.x11_inputshape import set_input_rects, clear_input_shape
+        if not self._hwnd:
+            self._hwnd = int(self.winId())
+        if not passthrough:
+            if self._linux_masked:
+                clear_input_shape(self._hwnd, self.width(), self.height())
+                self._linux_masked = False
+            return
+        rects = [(r.x(), r.y(), r.width(), r.height()) for r in self._mask_rects()]
+        set_input_rects(self._hwnd, rects)
         self._linux_masked = True
 
     # ── 帧循环 ──
