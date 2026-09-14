@@ -419,15 +419,22 @@ class PetWindow(EffectsMixin, ItemInteractionMixin, QWidget):
 
         # X11：改用 XShape 的 Input 通道，只裁点击命中区，不动可视渲染
         # （Qt 的 setMask 会连带裁掉超出遮罩框的贴身部件，如尾巴/舌头/甩出的残影）。
-        from .platform.x11_inputshape import set_input_rects, clear_input_shape
+        # XShape 吃的是真实屏幕物理像素；Qt widget 的几何/坐标都是"逻辑像素"，
+        # HiDPI 缩放（devicePixelRatioF）不是 1 时两者不等，须换算。
+        from .platform.x11_inputshape import set_input_rects, clear_input_shape, set_window_type_dock
         if not self._hwnd:
             self._hwnd = int(self.winId())
+        if not getattr(self, "_dock_type_set", False):
+            set_window_type_dock(self._hwnd)   # Super+D "显示桌面" 不收掉本窗
+            self._dock_type_set = True
+        dpr = self.devicePixelRatioF()
         if not passthrough:
             if self._linux_masked:
-                clear_input_shape(self._hwnd, self.width(), self.height())
+                clear_input_shape(self._hwnd, self.width() * dpr, self.height() * dpr)
                 self._linux_masked = False
             return
-        rects = [(r.x(), r.y(), r.width(), r.height()) for r in self._mask_rects()]
+        rects = [(r.x() * dpr, r.y() * dpr, r.width() * dpr, r.height() * dpr)
+                 for r in self._mask_rects()]
         set_input_rects(self._hwnd, rects)
         self._linux_masked = True
 

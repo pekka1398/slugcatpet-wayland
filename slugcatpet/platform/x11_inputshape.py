@@ -37,3 +37,18 @@ def set_input_rects(winid: int, rects) -> None:
 def clear_input_shape(winid: int, width: int, height: int) -> None:
     """恢复整窗可点击（清除 Input 裁剪）。"""
     set_input_rects(winid, [(0, 0, max(1, int(width)), max(1, int(height)))])
+
+
+def set_window_type_dock(winid: int) -> None:
+    """把窗口标成 _NET_WM_WINDOW_TYPE_DOCK：大多数 WM（含 mutter）的"显示桌面"
+    /最小化全部窗口不会动 DOCK 类型，且仍保持在普通窗口之上。"""
+    try:
+        from Xlib import Xatom
+        d = _get_display()
+        win = _window(winid)
+        type_atom = d.intern_atom("_NET_WM_WINDOW_TYPE")
+        dock_atom = d.intern_atom("_NET_WM_WINDOW_TYPE_DOCK")
+        win.change_property(type_atom, Xatom.ATOM, 32, [dock_atom])
+        d.flush()
+    except Exception:
+        pass
