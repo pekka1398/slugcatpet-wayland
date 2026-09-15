@@ -498,12 +498,12 @@ class SlugcatGraphics(GraphicsDrawMixin):
 
         if kind == "stretch":
             # 拱背前伸：上身前探抬高，胯下沉，头顶出去
-            self.draw0[0] += flip * 6.0 * a
-            self.draw0[1] -= 5.0 * a
-            self.draw1[0] -= flip * 2.0 * a
-            self.draw1[1] += 2.0 * a
-            self.head.vx += flip * 0.35 * a
-            self.head.vy -= 0.45 * a
+            self.draw0[0] += flip * 11.0 * a
+            self.draw0[1] -= 9.0 * a
+            self.draw1[0] -= flip * 4.0 * a
+            self.draw1[1] += 4.0 * a
+            self.head.vx += flip * 0.7 * a
+            self.head.vy -= 0.9 * a
 
         elif kind == "scratch":
             # 重心微沉，身体随挠动小幅抖
@@ -524,37 +524,43 @@ class SlugcatGraphics(GraphicsDrawMixin):
 
         elif kind == "sit":
             # 坐下：胯落地，上身立起来往后靠
-            self.draw0[0] -= flip * 2.0 * a
-            self.draw0[1] += 1.0 * a
-            self.draw1[1] += 5.0 * a
-            self.head.vy -= 0.15 * a
+            self.draw0[0] -= flip * 4.5 * a
+            self.draw0[1] += 2.0 * a
+            self.draw1[1] += 10.0 * a
+            self.head.vy -= 0.3 * a
 
         elif kind == "shake":
             # 抖毛：整体高频左右甩，头甩得比身子狠
             wob = math.sin(phase * 2.0 * math.pi)
-            self.draw0[0] += wob * 3.0 * a
-            self.draw0[1] -= 1.0 * a
-            self.draw1[0] += wob * 1.2 * a
-            self.head.vx += wob * 2.2 * a
-            self.head.vy -= 0.2 * a
+            self.draw0[0] += wob * 6.5 * a
+            self.draw0[1] -= 2.0 * a
+            self.draw1[0] += wob * 2.5 * a
+            self.head.vx += wob * 4.5 * a
+            self.head.vy -= 0.4 * a
 
         elif kind == "sniff":
             # 嗅地：头压到地面附近，胯翘起来
-            self.draw0[0] += flip * 4.0 * a
-            self.draw0[1] += 4.0 * a
-            self.draw1[1] -= 1.5 * a
-            self.head.vx += flip * 0.5 * a
-            self.head.vy += 1.1 * a
+            self.draw0[0] += flip * 8.0 * a
+            self.draw0[1] += 8.0 * a
+            self.draw1[1] -= 3.0 * a
+            self.head.vx += flip * 1.0 * a
+            self.head.vy += 2.2 * a
 
         elif kind == "walllean":
             # 靠墙：上身压向墙侧，胯外推，整体斜着撑住
             # phase 带的是墙的方向（±1），不是相位
             side = phase or flip
-            self.draw0[0] += side * 5.0 * a
-            self.draw0[1] += 1.5 * a
-            self.draw1[0] -= side * 2.0 * a
-            self.draw1[1] += 1.0 * a
-            self.head.vx += side * 0.3 * a
+            self.draw0[0] += side * 9.0 * a
+            self.draw0[1] += 3.0 * a
+            self.draw1[0] -= side * 4.0 * a
+            self.draw1[1] += 2.0 * a
+            self.head.vx += side * 0.6 * a
+
+        elif kind == "sneak":
+            # 潜行：bodyMode 已是 Crawl（趴姿帧自己会切），这里只再压低一点
+            self.draw0[1] += 3.0 * a
+            self.draw1[1] += 1.5 * a
+            self.head.vy += 0.5 * a
 
     def _apply_sleep_tail_curl(self):
         """尾巴睡眠蜷曲推进，在 tail.step() 之后调用。"""

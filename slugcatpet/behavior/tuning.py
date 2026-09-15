@@ -104,7 +104,12 @@ YAWN_DECAY = 0.0070
 YAWN_RECOVER = 0.00013         # 犯困时 ≈2min 一次
 YAWN_SF_FRESH = 0.60
 YAWN_SF_TIRED = 2.50            # 越困越优先（同场竞争时）
-YAWN_ENERGY_MAX = 0.60          # 精神头足于此根本不打哈欠
+# 注：曾拿 energy<=0.60 当哈欠闸门，实测是死条件（空场景 energy 恒 1.0），已废弃
+
+# 伸懒腰的前爪探出量：躯干位移幅度太小，靠伸爪撑辨识度
+STRETCH_PAW_X = 26.0
+STRETCH_PAW_Y = 12.0
+STRETCH_PAW_SPREAD = 7.0
 
 # 坐一会：不是睡，是歇；比别的小动作长得多
 SIT_TICKS_MIN = 320
@@ -156,6 +161,21 @@ LEAN_DECAY = 0.0020
 LEAN_RECOVER = 0.00008
 LEAN_SF_FRESH = 0.70
 LEAN_SF_TIRED = 1.60
+LEAN_PAW_OUT = 3.0              # 撑墙那只手探出墙面的量
+LEAN_PAW_Y = -6.0
+
+# 潜行：压成趴姿贴地挪一小段，轮廓变化最大的一式
+SNEAK_TICKS = 260
+SNEAK_RISE = 30
+SNEAK_FALL = 45
+SNEAK_DIST_MIN = 70.0
+SNEAK_DIST_MAX = 190.0
+SNEAK_BASE = 1.00
+SNEAK_START = 0.55
+SNEAK_INIT = 0.50
+SNEAK_DECAY = 0.0035
+SNEAK_RECOVER = 0.00012
+SNEAK_FLOOR_SLACK = 10          # 切趴姿那下会瞬时读出离地，给几 tick 宽限
 
 # 饱食度
 FOOD_INIT = 2

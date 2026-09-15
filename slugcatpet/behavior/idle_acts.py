@@ -18,7 +18,7 @@ from .desire import Candidate, play_mult
 
 # 全部小动作态名，供 fsm 能量表与清理判据引用
 ACTS = ("IdleStretch", "IdleScratch", "IdleYawn",
-        "IdleSit", "IdleShake", "IdleSniff", "IdleWallLean")
+        "IdleSit", "IdleShake", "IdleSniff", "IdleWallLean", "IdleSneak")
 
 
 def _lerp(x, lo, hi, flo, fhi):
@@ -41,36 +41,53 @@ def _envelope(timer, dur, rise, fall) -> float:
     return t * t * (3.0 - 2.0 * t)
 
 
+def _release_hands(fsm):
+    """放开本模块钉住的手，别的系统的 hand_aim 不碰。"""
+    for side in getattr(fsm, "_idleact_hands", ()):
+        fsm.gfx.hand_aim[side] = None
+    fsm._idleact_hands = ()
+
+
+def _hold_hand(fsm, side, pos):
+    """钉住一只手到世界坐标 pos，并记账以便离开时归还。"""
+    fsm.gfx.hand_aim[side] = pos
+    held = getattr(fsm, "_idleact_hands", ())
+    if side not in held:
+        fsm._idleact_hands = held + (side,)
+
+
 def _clear(fsm):
-    """复位姿态与本模块占用的那只手，别的系统的 hand_aim 不碰。"""
     fsm.gfx.idle_act = None
     fsm.gfx.leg_pose = None
-    side = getattr(fsm, "_idleact_hand", None)
-    if side is not None:
-        fsm.gfx.hand_aim[side] = None
-        fsm._idleact_hand = None
+    _release_hands(fsm)
 
 
-def _enter_common(fsm):
-    fsm.body.set_posture(True)
+def _enter_common(fsm, standing=True):
+    fsm.body.set_posture(standing)
     fsm.body.stop_walk()
+    fsm._idleact_air = 0
     # 小动作之间直接转态时不走 brk，这里补一次放手，免得上一式的手一直钉着
-    side = getattr(fsm, "_idleact_hand", None)
-    if side is not None:
-        fsm.gfx.hand_aim[side] = None
-        fsm._idleact_hand = None
+    _release_hands(fsm)
 
 
-def _interrupted(fsm) -> bool:
-    """被抓走或脚下踏空：复位并交还对应态。游泳/零重力由 update() 前置强转接管。"""
+def _interrupted(fsm, floor_slack: int = 0) -> bool:
+    """被抓走或脚下踏空：复位并交还对应态。游泳/零重力由 update() 前置强转接管。
+
+    floor_slack 是允许连续离地的 tick 数。切趴姿那一帧胯会下沉不到 1px，
+    on_floor() 恰好读出 False，不留余量的话潜行刚进就被自己弹去 Airborne。
+    """
     if fsm.grab.active:
         _clear(fsm)
         fsm._transition("Dragged")
         return True
-    if not fsm.body.on_floor():
-        _clear(fsm)
-        fsm._transition("Airborne")
-        return True
+    if fsm.body.on_floor():
+        fsm._idleact_air = 0
+    else:
+        fsm._idleact_air = getattr(fsm, "_idleact_air", 0) + 1
+        if fsm._idleact_air > floor_slack:
+            _clear(fsm)
+            fsm._transition("Airborne")
+            return True
     return False
 
 
@@ -88,6 +105,14 @@ def _mount_stretch(fsm):
                       tuning.STRETCH_RISE, tuning.STRETCH_FALL)
         fsm.gfx.idle_act = ("stretch", a, 0.0)
         fsm.gfx.look_at = None
+        if a > 0.05:
+            # 双手向前下方探出去——光靠躯干位移太小看不出来，伸爪才有辨识度
+            g = fsm.gfx
+            flip = fsm.body.facing
+            for i, side in enumerate(("l", "r")):
+                _hold_hand(fsm, side, (
+                    g.draw0[0] + flip * tuning.STRETCH_PAW_X * a,
+                    g.draw0[1] + tuning.STRETCH_PAW_Y * a + (i - 0.5) * tuning.STRETCH_PAW_SPREAD))
         if fsm.timer >= tuning.STRETCH_TICKS:
             brk()
             fsm._transition("IdleStand")
@@ -127,14 +152,14 @@ def _mount_scratch(fsm):
         side = "r" if flip > 0 else "l"
         if a > 0.05:
             # 换边时先把上一只手放回，免得两手同时被钉住
-            prev = getattr(fsm, "_idleact_hand", None)
-            if prev is not None and prev != side:
-                g.hand_aim[prev] = None
+            for prev in getattr(fsm, "_idleact_hands", ()):
+                if prev != side:
+                    g.hand_aim[prev] = None
+                    fsm._idleact_hands = tuple(s for s in fsm._idleact_hands if s != prev)
             jig = math.sin(phase * 2.0 * math.pi)
-            g.hand_aim[side] = (
+            _hold_hand(fsm, side, (
                 g.head.x + flip * (tuning.SCRATCH_REACH_X + tuning.SCRATCH_JIG_X * jig) * a,
-                g.head.y + (tuning.SCRATCH_REACH_Y + tuning.SCRATCH_JIG_Y * jig) * a)
-            fsm._idleact_hand = side
+                g.head.y + (tuning.SCRATCH_REACH_Y + tuning.SCRATCH_JIG_Y * jig) * a))
         if fsm.timer >= tuning.SCRATCH_TICKS:
             brk()
             fsm._transition("IdleStand")
@@ -182,9 +207,10 @@ def _mount_yawn(fsm):
         "idle_yawn", base=tuning.YAWN_BASE,
         start=tuning.YAWN_START, quit=0.0,
         decay=tuning.YAWN_DECAY, recover=tuning.YAWN_RECOVER,
-        # 频率由 decay/recover 定，权重只在同场竞争时起作用——
-        # 所以「越困越常打哈欠」得靠闸门：精神头足时根本不进候选池
-        gate=lambda ctx: not ctx.submerged and ctx.energy <= tuning.YAWN_ENERGY_MAX,
+        # 原本拿 ctx.energy <= YAWN_ENERGY_MAX 当闸门，实测是死条件：空场景里
+        # 发呆本身就回体力、没有耗体力的玩法，energy 长期钉在 1.0，哈欠一次都
+        # 放不出来。改成无条件候选，困不困只由权重在同场竞争时体现。
+        gate=lambda ctx: not ctx.submerged,
         energy_factor=lambda e: _lerp(e, 0.0, 1.0,
                                       tuning.YAWN_SF_TIRED, tuning.YAWN_SF_FRESH),
         temper_factor=lambda t: 1.0,
@@ -344,6 +370,12 @@ def _mount_walllean(fsm):
         fsm.gfx.idle_act = ("walllean", a, float(side))
         fsm.gfx.leg_pose = "wall" if a > 0.5 else None
         fsm.gfx.look_at = fsm._ambient_look(cursor)
+        if a > 0.05:
+            # 靠墙那侧的手撑在墙面上，比单纯歪身子好认得多
+            g = fsm.gfx
+            _hold_hand(fsm, "l" if side < 0 else "r",
+                       (_wall_x(side) + side * tuning.LEAN_PAW_OUT * a,
+                        g.draw0[1] + tuning.LEAN_PAW_Y * a))
         if fsm.timer >= dur:
             brk()
             fsm._transition("IdleStand")
@@ -372,6 +404,62 @@ def _mount_walllean(fsm):
         one_shot=True, init=tuning.LEAN_INIT))
 
 
+def _mount_sneak(fsm):
+    """潜行 IdleSneak：压低成趴姿，贴地挪一小段再起身。
+
+    set_posture(False) 在地面上会让 bodyMode 变 Crawl，整套 LegsACrawling
+    帧与趴行绘制分支随之生效——这是所有小动作里轮廓变化最大的一式。
+    """
+
+    def enter():
+        _enter_common(fsm, standing=False)        # 趴下
+        b = fsm.body
+        span = fsm.rng.uniform(tuning.SNEAK_DIST_MIN, tuning.SNEAK_DIST_MAX)
+        d = -1 if fsm.rng.random() < 0.5 else 1
+        if b.walk_min is not None:
+            lo, hi = b.walk_min, b.walk_max
+            tx = min(max(b.chunk1.x + d * span, lo), hi)
+            if abs(tx - b.chunk1.x) < tuning.SNEAK_DIST_MIN * 0.5:
+                tx = min(max(b.chunk1.x - d * span, lo), hi)   # 贴边就往回挪
+        else:
+            tx = b.chunk1.x
+        fsm._sneak_target = tx
+        b.walk_to(tx)
+        fsm.gfx.idle_act = ("sneak", 0.0, 0.0)
+
+    def tick(cursor, disturbed):
+        if _interrupted(fsm, floor_slack=tuning.SNEAK_FLOOR_SLACK):
+            return
+        b = fsm.body
+        a = _envelope(fsm.timer, tuning.SNEAK_TICKS, tuning.SNEAK_RISE, tuning.SNEAK_FALL)
+        fsm.gfx.idle_act = ("sneak", a, 0.0)
+        # 收势阶段先站回来，免得起身动画被切断
+        if a < 0.35 and fsm.timer > tuning.SNEAK_TICKS * 0.5:
+            b.set_posture(True)
+        target = getattr(fsm, "_sneak_target", None)
+        if target is not None and abs(b.chunk1.x - target) < 6.0:
+            b.stop_walk()
+        if fsm.timer >= tuning.SNEAK_TICKS:
+            brk()
+            fsm._transition("IdleStand")
+
+    def brk():
+        fsm.body.stop_walk()
+        fsm.body.set_posture(True)      # 无论怎么退出都得站回来
+        _clear(fsm)
+
+    fsm.register_state("IdleSneak", enter=enter, tick=tick, brk=brk, kill_break=brk,
+                       mood="idle_sneak")
+    fsm.mood.add(Candidate(
+        "idle_sneak", base=tuning.SNEAK_BASE * play_mult(fsm.pers, "idle_sneak"),
+        start=tuning.SNEAK_START, quit=0.0,
+        decay=tuning.SNEAK_DECAY, recover=tuning.SNEAK_RECOVER,
+        gate=lambda ctx: not ctx.submerged and ctx.energy >= tuning.IDLEACT_ENERGY_GATE,
+        energy_factor=lambda e: 1.0,
+        temper_factor=lambda t: 1.0,
+        one_shot=True, init=tuning.SNEAK_INIT))
+
+
 def _tick_cleanup(fsm):
     """兜底复位：update() 里有几处（如被抓）不走 brk 直接转态，姿态得有人收。"""
     if fsm.gfx.idle_act is not None and fsm.state not in ACTS:
@@ -380,7 +468,7 @@ def _tick_cleanup(fsm):
 
 def mount(fsm):
     """BehaviorFSM 构造时调用，先于 CatDef.fsm_mount。"""
-    fsm._idleact_hand = None       # 本模块占用中的那只手，None=没占
+    fsm._idleact_hands = ()        # 本模块当前钉住的手
     _mount_stretch(fsm)
     _mount_scratch(fsm)
     _mount_yawn(fsm)
@@ -388,4 +476,5 @@ def mount(fsm):
     _mount_shake(fsm)
     _mount_sniff(fsm)
     _mount_walllean(fsm)
+    _mount_sneak(fsm)
     fsm.register_ticker(lambda: _tick_cleanup(fsm))
