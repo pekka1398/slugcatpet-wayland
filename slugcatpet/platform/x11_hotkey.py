@@ -6,11 +6,14 @@
 NumLock 时热键会失灵）。
 """
 from __future__ import annotations
+import select
+
 from PySide6.QtCore import QThread, Signal
 
 
 class X11HotkeyThread(QThread):
     triggered = Signal()
+    POLL_TIMEOUT = 0.2      # 秒；退出延迟上限，也是空转频率
 
     def __init__(self, keysym_name: str = "p", mods=("control", "mod1"), parent=None):
         super().__init__(parent)
@@ -20,12 +23,13 @@ class X11HotkeyThread(QThread):
         self._display = None
 
     def stop(self):
+        """只置停止标志：连接由 run() 自己收尾。
+
+        别在这里 close()——Xlib 的 Display 不是线程安全的，主线程关连接既不能
+        叫醒阻塞在 next_event() 的本线程，还会跟它抢同一个 socket。轮询循环
+        最多 POLL_TIMEOUT 秒就回来看一次标志，wait() 因此总能等到。
+        """
         self._stop = True
-        try:
-            if self._display is not None:
-                self._display.close()
-        except Exception:
-            pass
 
     def run(self):
         try:
@@ -56,12 +60,22 @@ class X11HotkeyThread(QThread):
                 except Exception:
                     pass
             d.sync()
+            fd = d.fileno()
             while not self._stop:
-                ev = d.next_event()
+                # select 等连接可读，超时回来查停止标志；next_event() 直接堵着
+                # 的话退出时叫不醒，QThread.wait() 必然超时报「线程仍在运行」
+                try:
+                    readable, _, _ = select.select([fd], [], [], self.POLL_TIMEOUT)
+                except (OSError, ValueError):
+                    break
                 if self._stop:
                     break
-                if ev.type == X.KeyPress:
-                    self.triggered.emit()
+                if not readable:
+                    continue
+                for _ in range(d.pending_events()):
+                    ev = d.next_event()
+                    if ev.type == X.KeyPress:
+                        self.triggered.emit()
         except Exception:
             pass
         finally:
