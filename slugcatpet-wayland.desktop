@@ -1,8 +1,11 @@
 [Desktop Entry]
 Name=Slugcat Pet
 Comment=Rain World Desktop Pet
-Exec=/home/lanrhyme/Projects/slugcatpet/start.sh
+# 模板：把 @INSTALL_DIR@ 换成本仓库的绝对路径后再安装（见 README 的安装命令）
+Exec=@INSTALL_DIR@/start.sh
+Path=@INSTALL_DIR@
 Icon=utilities-terminal
 Terminal=false
 Type=Application
 Categories=Game;Amusement;
+StartupNotify=false

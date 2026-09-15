@@ -19,11 +19,19 @@ Linux Wayland 桌面宠物，让 Rain World 的蛞蝓猫住在你的屏幕上
 
 ```bash
 # Arch Linux 依赖安装
-sudo pacman -S gtk-layer-shell
+sudo pacman -S gtk-layer-shell python-gobject python-cairo
 
-# Python 依赖安装
-pip install PySide6 UnityPy numpy Pillow PyGObject pycairo
+# Debian / Ubuntu 依赖安装
+sudo apt install libgtk-layer-shell0 gir1.2-gtklayershell-0.1 \
+                 python3-gi python3-gi-cairo
+
+# Python 依赖安装（PyGObject/pycairo 建议用上面的系统包，
+# 故虚拟环境用 --system-site-packages 创建）
+python3 -m venv --system-site-packages .venv
+./.venv/bin/pip install PySide6 UnityPy numpy Pillow python-xlib
 ```
+
+其中 `python-xlib` 供 X11 会话使用（全局热键与鼠标穿透），Wayland 会话下不会被加载
 
 ## 启动与交互
 
@@ -34,7 +42,16 @@ chmod +x start.sh
 ./start.sh
 ```
 
-你也可以将生成的 `slugcatpet-wayland.desktop` 移动到 `~/.local/share/applications/` 目录下，随后即可通过系统的应用程序启动器直接运行
+`start.sh` 会自动探测 `.venv` / `venv_sys` / `venv` 目录下的解释器，都没有时回落到系统 `python3`
+
+仓库内的 `slugcatpet-wayland.desktop` 是一份模板，其中的 `@INSTALL_DIR@` 需要替换成本仓库的绝对路径。安装到应用程序启动器：
+
+```bash
+sed "s|@INSTALL_DIR@|$PWD|g" slugcatpet-wayland.desktop \
+    > ~/.local/share/applications/slugcatpet-wayland.desktop
+```
+
+若希望开机自启，把同一份文件再放一份到 `~/.config/autostart/` 即可
 
 **初始化说明**
 首次启动时，程序会弹窗引导你选择本机的 Rain World 安装目录
