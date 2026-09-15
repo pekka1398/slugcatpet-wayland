@@ -222,6 +222,7 @@ class SlugcatGraphics(GraphicsDrawMixin):
         self.look_dir = (0.0, 0.0)
         self.sleeping = False
         self.sleep_curl = 0.0
+        self.idle_act = None           # (kind, amount, phase)，由 behavior/idle_acts 每 tick 写
         self.gills_flat = 0.0          # 1=鳃锚退回世界水平（趴/睡）
         self.dead = False
         self.stunned = False           # 晕脸 + 头帧0耷拉
@@ -378,6 +379,7 @@ class SlugcatGraphics(GraphicsDrawMixin):
         elif self.gills_flat > gf:
             self.gills_flat = max(gf, self.gills_flat - GILLS_FLAT_RATE)
         self._apply_sleep_curl_pose()
+        self._apply_idle_act_pose()
 
         self._update_face_pose()
         self._update_legs()
@@ -472,6 +474,45 @@ class SlugcatGraphics(GraphicsDrawMixin):
         self.head.vy *= 1.0 - 0.4 * s
         self.head.x += (cx + side * 5.0 - self.head.x) * (0.5 * s)
         self.head.y += (cy + 3.0 - self.head.y) * (0.5 * s)
+
+    def _apply_idle_act_pose(self):
+        """待机小动作位姿：amount 为 0~1 包络，phase 供周期性动作取相位。
+
+        只偏移 draw0/draw1 与 head 速度——两者每帧从 chunk 重算，不会累积漂移。
+        """
+        act = self.idle_act
+        if act is None or self.sleep_curl > 0.0:
+            return
+        kind, a, phase = act
+        if a <= 0.0:
+            return
+        flip = self.body.facing
+
+        if kind == "stretch":
+            # 拱背前伸：上身前探抬高，胯下沉，头顶出去
+            self.draw0[0] += flip * 6.0 * a
+            self.draw0[1] -= 5.0 * a
+            self.draw1[0] -= flip * 2.0 * a
+            self.draw1[1] += 2.0 * a
+            self.head.vx += flip * 0.35 * a
+            self.head.vy -= 0.45 * a
+
+        elif kind == "scratch":
+            # 重心微沉，身体随挠动小幅抖
+            jig = math.sin(phase * 2.0 * math.pi)
+            self.draw0[0] += flip * 1.5 * a
+            self.draw0[1] += (1.5 + 0.8 * jig) * a
+            self.draw1[1] += 1.0 * a
+            self.head.vx += jig * 0.5 * a
+            self.head.vy += 0.2 * a
+
+        elif kind == "yawn":
+            # 后仰抬头，收势时回沉
+            self.draw0[0] -= flip * 2.5 * a
+            self.draw0[1] -= 3.5 * a
+            self.draw1[1] += 1.0 * a
+            self.head.vx -= flip * 0.3 * a
+            self.head.vy -= 0.6 * a
 
     def _apply_sleep_tail_curl(self):
         """尾巴睡眠蜷曲推进，在 tail.step() 之后调用。"""

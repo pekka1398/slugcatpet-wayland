@@ -88,7 +88,8 @@ _EN_VIGOROUS = frozenset(("TongueClimb", "PoleClimb", "HPole", "CeilingHang", "D
 _EN_LIGHT = frozenset(("RelocateToWall", "PostThrowWander", "FetchFruit", "AngryStone",
                        "WakeSequence", "CursorLick", "SeekWarmth", "SeekHPole", "MakeWay"))
 _EN_REST = frozenset(("LieDown", "Sleep"))
-_EN_IDLE = frozenset(("IdleStand", "PostThrowStand"))
+_EN_IDLE = frozenset(("IdleStand", "PostThrowStand",
+                      "IdleStretch", "IdleScratch", "IdleYawn"))   # 原地小动作按发呆回体力
 
 # 被顶让路仅从这些无更高目的态触发
 _MAKEWAY_FROM = frozenset(("IdleStand", "PostThrowWander", "PostThrowStand"))
@@ -260,6 +261,8 @@ class BehaviorFSM:
         self.threat_response = None
         self.drag_takeover = None
         self.stun_takeover = None
+        from . import idle_acts
+        idle_acts.mount(self)          # 待机小动作全员通用，先挂，猫种专属可覆盖
         cat = getattr(self.win, "cat", None)
         if cat is not None and cat.fsm_mount is not None:
             cat.fsm_mount(self)

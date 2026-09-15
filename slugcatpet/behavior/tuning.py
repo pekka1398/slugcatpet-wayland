@@ -60,6 +60,52 @@ IDLE_HOLD_MAX = 520
 IDLE_HOLD_TIRED_MULT = 1.8
 IDLE_BREATHER = 50
 
+# 待机小动作：原地自演，不耗体力不改坐标，只做姿态
+IDLEACT_ENERGY_GATE = 0.15      # 低于此不演，交给疲劳流程趴下
+
+# 伸懒腰：拱背前伸，起势慢收势快
+STRETCH_TICKS = 110
+STRETCH_RISE = 34
+STRETCH_FALL = 22
+STRETCH_BASE = 0.90
+STRETCH_START = 0.55
+STRETCH_INIT = 0.55
+STRETCH_DECAY = 0.0060
+STRETCH_RECOVER = 0.00011       # 新鲜度回升速度即复现周期，≈2.5min 一次
+STRETCH_SF_FRESH = 1.40         # 精神好更爱伸展
+STRETCH_SF_TIRED = 0.60
+
+# 挠痒：单手够头侧，正弦抖动
+SCRATCH_TICKS = 130
+SCRATCH_RISE = 20
+SCRATCH_FALL = 20
+SCRATCH_PERIOD = 9.0            # tick/周期，越小挠得越快
+SCRATCH_REACH_X = 11.0          # 手相对头的水平够取量，太小会埋进身体轮廓里
+SCRATCH_REACH_Y = -6.0          # 负=头顶偏上
+SCRATCH_JIG_X = 3.0             # 挠动幅度
+SCRATCH_JIG_Y = 2.5
+SCRATCH_BASE = 0.80
+SCRATCH_START = 0.50
+SCRATCH_INIT = 0.50
+SCRATCH_DECAY = 0.0050
+SCRATCH_RECOVER = 0.00009      # ≈3min 一次
+SCRATCH_TF_GRUMPY = 1.40        # 好感低更爱挠
+SCRATCH_TF_FOND = 0.80
+
+# 打哈欠：后仰抬头眯眼，越困越常见
+YAWN_TICKS = 90
+YAWN_RISE = 26
+YAWN_FALL = 30
+YAWN_EYES_SHUT = 0.45           # 包络过此线开始眯眼
+YAWN_BASE = 0.70
+YAWN_START = 0.60
+YAWN_INIT = 0.30
+YAWN_DECAY = 0.0070
+YAWN_RECOVER = 0.00013         # 犯困时 ≈2min 一次
+YAWN_SF_FRESH = 0.60
+YAWN_SF_TIRED = 2.50            # 越困越优先（同场竞争时）
+YAWN_ENERGY_MAX = 0.60          # 精神头足于此根本不打哈欠
+
 # 饱食度
 FOOD_INIT = 2
 FOOD_KILL_PENALTY = 4
