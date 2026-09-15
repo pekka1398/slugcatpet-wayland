@@ -66,6 +66,8 @@ def _enter_common(fsm, standing=True):
     fsm.body.set_posture(standing)
     fsm.body.stop_walk()
     fsm._idleact_air = 0
+    if standing:
+        fsm._idleact_prone = False
     # 小动作之间直接转态时不走 brk，这里补一次放手，免得上一式的手一直钉着
     _release_hands(fsm)
 
@@ -413,6 +415,7 @@ def _mount_sneak(fsm):
 
     def enter():
         _enter_common(fsm, standing=False)        # 趴下
+        fsm._idleact_prone = True                 # 记账，兜底复位据此还原站姿
         b = fsm.body
         span = fsm.rng.uniform(tuning.SNEAK_DIST_MIN, tuning.SNEAK_DIST_MAX)
         d = -1 if fsm.rng.random() < 0.5 else 1
@@ -446,6 +449,7 @@ def _mount_sneak(fsm):
     def brk():
         fsm.body.stop_walk()
         fsm.body.set_posture(True)      # 无论怎么退出都得站回来
+        fsm._idleact_prone = False
         _clear(fsm)
 
     fsm.register_state("IdleSneak", enter=enter, tick=tick, brk=brk, kill_break=brk,
@@ -460,10 +464,42 @@ def _mount_sneak(fsm):
         one_shot=True, init=tuning.SNEAK_INIT))
 
 
+# 本来就该趴着的态：兜底复位不去动它们的姿势
+# WakeSequence 在 phase 0 会自己 set_posture(False) 演起身，别跟它抢
+_PRONE_OK = frozenset(("Sleep", "LieDown", "Swimming", "Stunned", "Dead",
+                       "Dragged", "TongueClimb", "CeilingHang", "Ascension",
+                       "DodgeKill", "PoleClimb", "HPole", "WakeSequence",
+                       "IdleSneak"))
+
+
+def _restore_posture(fsm):
+    if getattr(fsm, "_idleact_prone", False):
+        fsm._idleact_prone = False
+        if fsm.state not in _PRONE_OK:
+            fsm.body.set_posture(True)
+
+
 def _tick_cleanup(fsm):
-    """兜底复位：update() 里有几处（如被抓）不走 brk 直接转态，姿态得有人收。"""
-    if fsm.gfx.idle_act is not None and fsm.state not in ACTS:
+    """兜底复位：update() 里有几处不走 brk 直接转态，姿态得有人收。
+
+    两种情况：
+    1. 已经转走了（如上一帧被抓）——照常清理。
+    2. 还在小动作态但 grab 已经按下：update() 本帧稍后会直接 _transition
+       ("Dragged")，既不走 brk 也不走本式的 tick。不在这儿抢先收的话，这一帧
+       会带着旧姿态渲染出去，而且 _st_dragged 的 _clear_hands() 会把 hand_aim
+       清掉、跟我们的记账对不上。ticker 跑在 grab 判定之前，正好堵住这个窗口。
+
+    潜行把 body.standing 置了 False，光清 gfx 不够——虽然眼下每个可能的转入态
+    碰巧都自己 set_posture(True)，但那是靠别人保证的，加个态就可能漏。
+    """
+    if fsm.state in ACTS:
+        if fsm.grab.active:
+            _clear(fsm)
+            _restore_posture(fsm)
+        return
+    if fsm.gfx.idle_act is not None:
         _clear(fsm)
+    _restore_posture(fsm)
 
 
 def mount(fsm):
