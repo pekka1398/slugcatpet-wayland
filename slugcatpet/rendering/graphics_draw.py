@@ -304,7 +304,10 @@ class GraphicsDrawMixin:
                 d1y = _lerp(self._last_draw1[1], self.draw1[1], ts)
                 y = clampf(y, d1y - 4.0, d1y + 6.0)
         elif self.bodyMode == "Stand":
-            if self.is_moving():
+            wall = self._leg_wall_frame if self.leg_pose == "wall" else None
+            if wall is not None:
+                element = wall
+            elif self.is_moving():
                 n = len(self._leg_walk_frames)
                 element = self._leg_walk_frames[af % n]
             else:

@@ -223,6 +223,7 @@ class SlugcatGraphics(GraphicsDrawMixin):
         self.sleeping = False
         self.sleep_curl = 0.0
         self.idle_act = None           # (kind, amount, phase)，由 behavior/idle_acts 每 tick 写
+        self.leg_pose = None           # 站立态腿帧覆盖，目前只有 "wall"
         self.gills_flat = 0.0          # 1=鳃锚退回世界水平（趴/睡）
         self.dead = False
         self.stunned = False           # 晕脸 + 头帧0耷拉
@@ -255,6 +256,13 @@ class SlugcatGraphics(GraphicsDrawMixin):
                                if self.atlas is not None and self.atlas.atlases[air_key].has(air_frame)
                                else (self._leg_walk_frames[0] if self._leg_walk_frames
                                      else fam["legs_walk"][1] + "0"))
+
+        # 靠墙帧：图集里本就有 LegsAWall 但此前没人用，缺帧则退回走路帧
+        walk_key = fam["legs_walk"][0]
+        self._leg_wall_frame = (
+            "LegsAWall"
+            if self.atlas is not None and self.atlas.atlases[walk_key].has("LegsAWall")
+            else None)
 
         self.ascension = None
         self._asc_face_color = None
@@ -513,6 +521,40 @@ class SlugcatGraphics(GraphicsDrawMixin):
             self.draw1[1] += 1.0 * a
             self.head.vx -= flip * 0.3 * a
             self.head.vy -= 0.6 * a
+
+        elif kind == "sit":
+            # 坐下：胯落地，上身立起来往后靠
+            self.draw0[0] -= flip * 2.0 * a
+            self.draw0[1] += 1.0 * a
+            self.draw1[1] += 5.0 * a
+            self.head.vy -= 0.15 * a
+
+        elif kind == "shake":
+            # 抖毛：整体高频左右甩，头甩得比身子狠
+            wob = math.sin(phase * 2.0 * math.pi)
+            self.draw0[0] += wob * 3.0 * a
+            self.draw0[1] -= 1.0 * a
+            self.draw1[0] += wob * 1.2 * a
+            self.head.vx += wob * 2.2 * a
+            self.head.vy -= 0.2 * a
+
+        elif kind == "sniff":
+            # 嗅地：头压到地面附近，胯翘起来
+            self.draw0[0] += flip * 4.0 * a
+            self.draw0[1] += 4.0 * a
+            self.draw1[1] -= 1.5 * a
+            self.head.vx += flip * 0.5 * a
+            self.head.vy += 1.1 * a
+
+        elif kind == "walllean":
+            # 靠墙：上身压向墙侧，胯外推，整体斜着撑住
+            # phase 带的是墙的方向（±1），不是相位
+            side = phase or flip
+            self.draw0[0] += side * 5.0 * a
+            self.draw0[1] += 1.5 * a
+            self.draw1[0] -= side * 2.0 * a
+            self.draw1[1] += 1.0 * a
+            self.head.vx += side * 0.3 * a
 
     def _apply_sleep_tail_curl(self):
         """尾巴睡眠蜷曲推进，在 tail.step() 之后调用。"""

@@ -86,10 +86,13 @@ _FETCH_PLAY = frozenset(("PoleClimb", "HPole", "CeilingHang"))
 _EN_VIGOROUS = frozenset(("TongueClimb", "PoleClimb", "HPole", "CeilingHang", "DodgeKill", "Swimming",
                           "PyroRomp", "RivFlip", "PyroMaul", "RivSnatch"))
 _EN_LIGHT = frozenset(("RelocateToWall", "PostThrowWander", "FetchFruit", "AngryStone",
-                       "WakeSequence", "CursorLick", "SeekWarmth", "SeekHPole", "MakeWay"))
-_EN_REST = frozenset(("LieDown", "Sleep"))
+                       "WakeSequence", "CursorLick", "SeekWarmth", "SeekHPole", "MakeWay",
+                       "IdleWallLean"))   # 靠墙要走一段，按轻度消耗算
+_EN_REST = frozenset(("LieDown", "Sleep", "IdleSit"))
 _EN_IDLE = frozenset(("IdleStand", "PostThrowStand",
-                      "IdleStretch", "IdleScratch", "IdleYawn"))   # 原地小动作按发呆回体力
+                      # 原地小动作按发呆回体力；坐着比站着回得快，归入 _EN_REST
+                      "IdleStretch", "IdleScratch", "IdleYawn",
+                      "IdleShake", "IdleSniff"))
 
 # 被顶让路仅从这些无更高目的态触发
 _MAKEWAY_FROM = frozenset(("IdleStand", "PostThrowWander", "PostThrowStand"))
